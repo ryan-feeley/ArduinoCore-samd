@@ -31,18 +31,44 @@ extern const uint32_t __text_start__;
 #define APP_START ((volatile uint32_t)(&__text_start__) + 4)
 
 #else
+
+#if defined(__SAMD51__)
+#define APP_START 0x00004004
+#else
 #define APP_START 0x00002004
 #endif
 
+#endif
+
 static inline bool nvmReady(void) {
+#if defined(__SAMD51__)
+		return NVMCTRL->STATUS.reg & NVMCTRL_STATUS_READY;
+#else
         return NVMCTRL->INTFLAG.reg & NVMCTRL_INTFLAG_READY;
+#endif
 }
 
 __attribute__ ((long_call, section (".ramfunc")))
 static void banzai() {
 	// Disable all interrupts
 	__disable_irq();
+	
+#if defined(__SAMD51__)
+	//THESE MUST MATCH THE BOOTLOADER
+	#define DOUBLE_TAP_MAGIC 			0xf01669efUL
+	#define BOOT_DOUBLE_TAP_ADDRESS     (HSRAM_ADDR + HSRAM_SIZE - 4)
 
+	unsigned long *a = (unsigned long *)BOOT_DOUBLE_TAP_ADDRESS;
+	*a = DOUBLE_TAP_MAGIC;
+	//NVMCTRL->ADDR.reg  = APP_START;
+	//NVMCTRL->CTRLB.reg = NVMCTRL_CTRLB_CMD_EB | NVMCTRL_CTRLB_CMDEX_KEY;
+	
+	// Reset the device
+	NVIC_SystemReset() ;
+
+	while (true);
+#else
+	
 	// Avoid erasing the application if APP_START is < than the minimum bootloader size
 	// This could happen if without_bootloader linker script was chosen
 	// Minimum bootloader size in SAMD21 family is 512bytes (RM section 22.6.5)
@@ -64,6 +90,8 @@ reset:
 	NVIC_SystemReset() ;
 
 	while (true);
+#endif
+
 }
 
 static int ticks = -1;

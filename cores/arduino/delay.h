@@ -68,6 +68,20 @@ static __inline__ void delayMicroseconds( unsigned int usec )
     return ;
   }
 
+#if defined(__SAMD51__)
+  unsigned long n = usec * (VARIANT_MCK / 1000000) / 12;
+
+  __asm__ __volatile__(
+    "1:              \n"
+    "   sub %0, #1   \n" // substract 1 from %0 (n)
+    "   cmp %0, #0   \n" // compare to 0
+    "   bne 1b       \n" // if result is not 0 jump to 1
+    : "+r" (n)           // '%0' is n variable with RW constraints
+    :                    // no input
+    :                    // no clobber
+  );
+
+#else
   /*
    *  The following loop:
    *
@@ -93,6 +107,7 @@ static __inline__ void delayMicroseconds( unsigned int usec )
     :                    // no input
     :                    // no clobber
   );
+#endif
   // https://gcc.gnu.org/onlinedocs/gcc/Extended-Asm.html
   // https://gcc.gnu.org/onlinedocs/gcc/Extended-Asm.html#Volatile
 }

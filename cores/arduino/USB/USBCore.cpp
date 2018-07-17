@@ -20,7 +20,13 @@
 
 #include <Arduino.h>
 
-#include "SAMD21_USBDevice.h"
+// there are ~slight~ CMSIS differences :/
+#ifdef __SAMR21G18A__
+  #include "SAMR21_USBDevice.h"
+#else
+  #include "SAMD21_USBDevice.h"
+#endif
+
 #include "PluggableUSB.h"
 
 #include <stdlib.h>
@@ -28,7 +34,12 @@
 #include <stdint.h>
 #include <limits.h>
 
+#ifdef __SAMR21G18A__
+USBDevice_SAMR21G18x usbd;
+#else
 USBDevice_SAMD21G18x usbd;
+#endif
+
 
 /** Pulse generation counters to keep track of the number of milliseconds remaining for each pulse type */
 #define TX_RX_LED_PULSE_MS 100
@@ -313,7 +324,22 @@ void USBDeviceClass::init()
 	digitalWrite(PIN_LED_RXL, HIGH);
 #endif
 
-	// Enable USB clock
+	/* Enable USB clock */
+#if defined(__SAMD51__)
+	MCLK->APBBMASK.reg |= MCLK_APBBMASK_USB;
+	MCLK->AHBMASK.reg |= MCLK_AHBMASK_USB;
+	
+	// Set up the USB DP/DN pins
+	PORT->Group[0].PINCFG[PIN_PA24H_USB_DM].bit.PMUXEN = 1;
+	PORT->Group[0].PMUX[PIN_PA24H_USB_DM/2].reg &= ~(0xF << (4 * (PIN_PA24H_USB_DM & 0x01u)));
+	PORT->Group[0].PMUX[PIN_PA24H_USB_DM/2].reg |= MUX_PA24H_USB_DM << (4 * (PIN_PA24H_USB_DM & 0x01u));
+	PORT->Group[0].PINCFG[PIN_PA25H_USB_DP].bit.PMUXEN = 1;
+	PORT->Group[0].PMUX[PIN_PA25H_USB_DP/2].reg &= ~(0xF << (4 * (PIN_PA25H_USB_DP & 0x01u)));
+	PORT->Group[0].PMUX[PIN_PA25H_USB_DP/2].reg |= MUX_PA25H_USB_DP << (4 * (PIN_PA25H_USB_DP & 0x01u));
+	
+	
+	GCLK->PCHCTRL[USB_GCLK_ID].reg = GCLK_PCHCTRL_GEN_GCLK1_Val | (1 << GCLK_PCHCTRL_CHEN_Pos);
+#else
 	PM->APBBMASK.reg |= PM_APBBMASK_USB;
 
 	// Set up the USB DP/DN pins
@@ -329,7 +355,8 @@ void USBDeviceClass::init()
 	                    GCLK_CLKCTRL_GEN_GCLK0 | // Generic Clock Generator 0 is source
 	                    GCLK_CLKCTRL_CLKEN;
 	while (GCLK->STATUS.bit.SYNCBUSY)
-		;
+	;
+#endif
 
 	USB_SetHandler(&UDD_Handler);
 
@@ -342,8 +369,20 @@ void USBDeviceClass::init()
 	usbd.setFullSpeed();
 
 	// Configure interrupts
+#if defined(__SAMD51__)
+	/* Attach to the USB host */
+	NVIC_SetPriority(USB_0_IRQn, 0UL);
+	NVIC_SetPriority(USB_1_IRQn, 0UL);
+	NVIC_SetPriority(USB_2_IRQn, 0UL);
+	NVIC_SetPriority(USB_3_IRQn, 0UL);
+	NVIC_EnableIRQ(USB_0_IRQn);
+	NVIC_EnableIRQ(USB_1_IRQn);
+	NVIC_EnableIRQ(USB_2_IRQn);
+	NVIC_EnableIRQ(USB_3_IRQn);
+#else
 	NVIC_SetPriority((IRQn_Type) USB_IRQn, 0UL);
 	NVIC_EnableIRQ((IRQn_Type) USB_IRQn);
+#endif
 
 	usbd.enable();
 
@@ -458,6 +497,12 @@ void USBDeviceClass::initEP(uint32_t ep, uint32_t config)
 			epHandlers[ep] = new DoubleBufferedEPOutHandler(usbd, ep, 256);
 		}
 	}
+	else if (config == (USB_ENDPOINT_TYPE_INTERRUPT | USB_ENDPOINT_OUT(0)))
+    {
+	    if(epHandlers[ep]){
+	        epHandlers[ep]->init();
+	    }
+    }
 	else if (config == (USB_ENDPOINT_TYPE_BULK | USB_ENDPOINT_IN(0)))
 	{
 		usbd.epBank1SetSize(ep, 64);
@@ -487,6 +532,10 @@ void USBDeviceClass::initEP(uint32_t ep, uint32_t config)
 		// NAK on endpoint OUT, the bank is full.
 		usbd.epBank0SetReady(ep);
 	}
+}
+
+void USBDeviceClass::setHandler(uint32_t ep, EPHandler *handler) {
+    epHandlers[ep] = handler;
 }
 
 void USBDeviceClass::flush(uint32_t ep)
